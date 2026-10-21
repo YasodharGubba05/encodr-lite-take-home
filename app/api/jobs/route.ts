@@ -1,39 +1,65 @@
-import { error } from "@/lib/server/http";
+import { json, withAuth, readJson, validationError, error } from "@/lib/server/http";
+import { createJob, listJobs } from "@/lib/server/store";
+import { createJobSchema } from "@/lib/schemas";
 
-// ---------------------------------------------------------------------------
-// TASK 2 — TODO(candidate): implement both handlers.
-// ---------------------------------------------------------------------------
+// GET /api/jobs — returns every job for the signed-in user, newest first.
+// POST /api/jobs — validates the body and creates a new job, or returns 422 with field errors.
 //
-// Look at app/api/jobs/[id]/route.ts first — it's a complete, working example of the pattern.
-// The helpers you need are all in lib/server/http.ts: withAuth, json, error, readJson,
-// validationError. The store functions are listJobs() and createJob() in lib/server/store.ts.
+// Both handlers follow the same pattern as app/api/jobs/[id]/route.ts:
+//   withAuth wraps the real work so unauthenticated requests are rejected automatically.
 //
-// GET /api/jobs
-//   - signed-in only (401 otherwise),
-//   - returns the array of jobs.
-//
-// POST /api/jobs
-//   - signed-in only (401 otherwise),
-//   - body is { sourceUrl: string, title?: string },
-//   - validate it with createJobSchema — the SAME schema the browser form uses. This matters:
-//     a request can reach this route without ever going through your form (curl, Postman, a bug),
-//     so the server must check for itself. Never trust the client.
-//   - on invalid input, return validationError(parsed.error) — a 422 whose body carries per-field
-//     messages, which is what Task 4's form maps back onto its inputs.
-//   - on success, create the job and return it with status 201.
-//
-// You can check your work without any UI:
+// You can test these without any UI — start the dev server and run:
 //   curl -i localhost:3000/api/jobs                                  # expect 401
-//   TOKEN=$(curl -s localhost:3000/api/auth/login -H 'content-type: application/json' \
-//     -d '{"email":"demo@encodr.dev","password":"password123"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
-//   curl -i localhost:3000/api/jobs -H "authorization: Bearer $TOKEN"                 # expect 200 []
+//   TOKEN=$(curl -s localhost:3000/api/auth/login \
+//     -H 'content-type: application/json' \
+//     -d '{"email":"demo@encodr.dev","password":"password123"}' \
+//     | sed 's/.*"token":"\([^"]*\)".*/\1/')
+//   curl -i localhost:3000/api/jobs -H "authorization: Bearer $TOKEN"   # expect 200 []
 //   curl -i localhost:3000/api/jobs -H "authorization: Bearer $TOKEN" \
-//     -H 'content-type: application/json' -d '{"sourceUrl":"nope"}'                   # expect 422
+//     -H 'content-type: application/json' -d '{"sourceUrl":"nope"}'     # expect 422
+//   curl -i localhost:3000/api/jobs -H "authorization: Bearer $TOKEN" \
+//     -H 'content-type: application/json' \
+//     -d '{"sourceUrl":"https://cdn.example.com/v/clip.mp4"}'           # expect 201
 
-export async function GET(_req: Request) {
-  return error(501, "Not implemented: GET /api/jobs");
+/**
+ * GET /api/jobs
+ *
+ * Returns the full list of jobs, sorted newest-first by listJobs().
+ * Requires a valid auth token — withAuth returns 401 automatically if missing.
+ */
+export async function GET(req: Request) {
+  return withAuth(req, () => {
+    return json(listJobs());
+  });
 }
 
-export async function POST(_req: Request) {
-  return error(501, "Not implemented: POST /api/jobs");
+/**
+ * POST /api/jobs
+ *
+ * Creates a new encode job from { sourceUrl, title? } in the request body.
+ *
+ * Why validate on the server even though the form already validates?
+ * The form validation only runs in the browser. Anyone can send a raw curl
+ * request (or a buggy client) that skips the form entirely. The server must
+ * never trust the client — it validates with the same Zod schema so the rules
+ * are identical and the same error messages come back whether you're using the
+ * form or a terminal.
+ *
+ * Returns 201 + the new Job on success, or 422 + per-field messages on failure.
+ */
+export async function POST(req: Request) {
+  return withAuth(req, async () => {
+    const body = await readJson(req);
+    const parsed = createJobSchema.safeParse(body);
+
+    // If validation fails, return 422 with field-level error messages.
+    // The form reads these from parsed.error and puts them under the right input.
+    if (!parsed.success) {
+      return validationError(parsed.error);
+    }
+
+    const job = createJob(parsed.data);
+    return json(job, 201);
+  });
 }
+
