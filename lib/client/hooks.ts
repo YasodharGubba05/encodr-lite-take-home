@@ -52,18 +52,21 @@ export function useStartRun(jobId: string) {
 }
 
 /**
- * TASK 4 — TODO(candidate): a mutation that creates a job.
+ * Mutation hook for creating a new video encoding job.
+ * Sends a POST request to /api/jobs with the validated job inputs.
+ * On success, invalidates jobKeys.all so the jobs list refetches automatically.
  *
- * It should POST the form values to /api/jobs and, on success, invalidate jobKeys.all so the
- * list picks up the new job. Model it on useStartRun above.
- *
- * The return type of the POST is Job. The input type is CreateJobInput (imported above), which
- * is inferred from the same Zod schema the form uses — so the form, this mutation and the server
- * all agree on the shape.
- *
- * Errors need no special handling here: api.ts throws an ApiError, and the component reads
- * `mutation.error` to decide what to show.
+ * @returns React Query mutation object for creating jobs.
  */
+export function useCreateJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateJobInput) => api.post<Job>("/api/jobs", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: jobKeys.all });
+    },
+  });
+}
 
 /**
  * TASK 5 — TODO(candidate): fetch a single run's current state.
