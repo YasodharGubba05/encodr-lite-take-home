@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { EncodeRun } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { isTerminalStage, type EncodeRun } from "@/lib/types";
+import { fetchRun } from "@/lib/client/hooks";
 
 export interface RunPollingState {
   /** The latest run state we've received, or null before the first response. */
@@ -22,55 +23,110 @@ const initialState: RunPollingState = {
 };
 
 /**
- * TASK 5 — TODO(candidate): poll a run until it finishes.
+ * Custom hook to poll the status of an encode run at ~1s intervals until a terminal
+ * stage (COMPLETED or FAILED) is reached.
  *
- * The server does not push anything to us. To show live progress, we ask "what's the state of
- * this run?" roughly once a second, until the run reaches a terminal stage (COMPLETED or FAILED).
- *
- * What this hook must do:
- *   1. When `runId` is null, do nothing at all.
- *   2. When `runId` is set, fetch the run immediately, then keep fetching about once a second.
- *   3. Track the latest run in state, and append each new `message` to `log`
- *      (don't append the same message twice in a row — the same stage repeats across polls).
- *   4. STOP polling once `isTerminalStage(run.stage)` is true, and call `onFinished?.()` so the
- *      page can refresh the job's status.
- *   5. CLEAN UP: when the component unmounts, or when `runId` changes, stop the timer and don't
- *      write to state any more.
- *
- * Point 5 is the one that separates a working version from a correct one, so here's the shape of
- * the answer. A useEffect can return a cleanup function, which React calls before the next run of
- * the effect and when the component unmounts:
- *
- *     useEffect(() => {
- *       let cancelled = false;                    // ← the guard
- *       const id = setInterval(() => {
- *         if (cancelled) return;
- *         // ...do the work
- *       }, 1000);
- *
- *       return () => {                            // ← the cleanup
- *         cancelled = true;
- *         clearInterval(id);
- *       };
- *     }, [runId]);
- *
- * Two separate problems are being solved there, and you need both:
- *   - `clearInterval` stops future ticks. Without it, navigating away leaves a timer hammering
- *     the API forever, and mounting the page a few times gives you several timers at once.
- *   - `cancelled` handles the request that's ALREADY in flight. A fetch started just before
- *     unmount will still resolve afterwards; calling setState at that point updates a component
- *     that no longer exists. Check the flag after every `await` before touching state.
- *
- * To see whether you got it right: add a `console.log` on each poll, start a run, then navigate
- * back to the jobs list before it finishes. The logs should stop. If they don't, the cleanup
- * isn't working — and this is exactly the bug we'll ask you about in the interview.
+ * @param runId ID of the run to poll, or null if no run is currently active.
+ * @param onFinished Optional callback fired once when the run enters a terminal stage.
+ * @returns Current RunPollingState including the latest run, polling flag, error, and message logs.
  */
 export function useRunPolling(runId: string | null, onFinished?: () => void): RunPollingState {
-  const [state] = useState<RunPollingState>(initialState);
+  const [state, setState] = useState<RunPollingState>(initialState);
+
+  // Keep onFinished in a ref so changes to the callback identity do not restart the polling effect.
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
 
   useEffect(() => {
-    if (!runId) return;
-    // TODO(candidate): start polling here, and return a cleanup function.
+    // When runId is null, do not start polling.
+    if (!runId) {
+      setState(initialState);
+      return;
+    }
+
+    const activeRunId = runId;
+
+    // Reset state when starting a new run.
+    setState({
+      run: null,
+      polling: true,
+      fetchError: null,
+      log: [],
+    });
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let finished = false;
+
+    async function poll() {
+      try {
+        const run = await fetchRun(activeRunId);
+        // Non-obvious: why we check `cancelled` after every await.
+        // If the component unmounted while fetchRun was in-flight, setting state would
+        // cause memory leaks and React warnings on unmounted components.
+        if (cancelled) return;
+
+        setState((prev) => {
+          // Append run.message to log unless it equals the last message seen
+          const lastMessage = prev.log.length > 0 ? prev.log[prev.log.length - 1] : null;
+          const newLog =
+            run.message && run.message !== lastMessage
+              ? [...prev.log, run.message]
+              : prev.log;
+
+          const terminal = isTerminalStage(run.stage);
+          return {
+            run,
+            polling: !terminal,
+            fetchError: null,
+            log: newLog,
+          };
+        });
+
+        // When a terminal stage is reached (COMPLETED or FAILED), stop future ticks
+        // and notify onFinished once.
+        if (isTerminalStage(run.stage) && !finished) {
+          finished = true;
+          if (intervalId !== null) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          onFinishedRef.current?.();
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // On network or request failure, stop polling and record error
+        if (intervalId !== null) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        setState((prev) => ({
+          ...prev,
+          polling: false,
+          fetchError: error instanceof Error ? error.message : "Failed to fetch run status",
+        }));
+      }
+    }
+
+    // Poll immediately on mount or runId change
+    void poll();
+
+    // Schedule regular polling every 1000ms
+    intervalId = setInterval(() => {
+      if (cancelled || finished) return;
+      void poll();
+    }, 1000);
+
+    return () => {
+      // Non-obvious: why we need BOTH clearInterval and the cancelled flag.
+      // 1. clearInterval stops future timer callbacks from firing, avoiding runaway background intervals.
+      // 2. cancelled flag guards any asynchronous fetch that is ALREADY in-flight when unmount happens,
+      //    preventing setState from executing after the component has unmounted.
+      cancelled = true;
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+      }
+    };
   }, [runId]);
 
   return state;
