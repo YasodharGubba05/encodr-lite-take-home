@@ -1,119 +1,140 @@
-# Encodr Lite — Media Transcoding Dashboard
+# Encodr Lite — Intern Take-Home
 
-Encodr Lite is a media-transcoding dashboard built with **Next.js (App Router)**, **React**, **TypeScript**, **React Query**, **React Hook Form**, **Zod**, and **Vitest**. A signed-in user creates an encode **job** from a media source URL, clicks **Start encode**, watches progress update live with real-time logs, and inspects the output renditions upon completion (or reviews failure details and retries).
+Thanks for taking the time on this. **Encodr Lite** is a small media-transcoding dashboard: a
+signed-in user creates an encode **job** from a media URL, presses **Start encode**, watches the
+progress update live, and sees the output files when it finishes.
 
----
+The full brief — the six tasks, what we look for, and the ground rules — is in **`BRIEF.md`**.
+**Read that first.** This file is just how to run things, and it's where you write up your work when
+you're done.
 
-## Getting Started
+## Run it
 
 ```bash
 npm install
-npm run dev          # Start local dev server (http://localhost:3000)
-npm run test:run     # Run Vitest test suite
-npm run typecheck    # Validate TypeScript types (tsc --noEmit)
-npm run build        # Production Next.js build
+npm run dev          # http://localhost:3000
+npm run test:run     # tests (20 tests, all passing)
+npm run typecheck    # tsc --noEmit
+npm run build        # production build
 ```
 
-Requires **Node 20+** (see `.nvmrc`).
+Requires **Node 20+** (`.nvmrc` says 20).
 
-**Demo Login Credentials:**
-- **Email:** `demo@encodr.dev`
-- **Password:** `password123`
+**Demo login:** `demo@encodr.dev` / `password123`
 
----
+Nothing here needs a database. State lives in memory, so restarting the dev server wipes your jobs.
+That's fine — don't work around it.
 
-## Project Structure
+## Where things are
 
 ```
 app/
-  signin/page.tsx              Working sign-in (RHF + Zod reference)
-  (app)/layout.tsx             Route guard for authenticated routes
-  (app)/jobs/page.tsx          Jobs overview and CreateJobForm mount
-  (app)/jobs/[id]/page.tsx     Job detail view: run controls, live progress, results
-  api/auth/login/route.ts      Login route (issues JWT tokens)
-  api/jobs/route.ts            GET (list jobs) and POST (create job with validation)
-  api/jobs/[id]/route.ts       GET single job detail
-  api/runs/route.ts            POST (start an encode run)
-  api/runs/[id]/route.ts       GET (poll run progress)
+  signin/page.tsx              working sign-in — your example of RHF + Zod
+  (app)/layout.tsx             route guard for everything signed-in
+  (app)/jobs/page.tsx          TASK 4 — the create-job form
+  (app)/jobs/[id]/page.tsx     TASK 5 — run controls, progress, results
+  api/auth/login/route.ts      provided
+  api/jobs/route.ts            TASK 2 — list + create
+  api/jobs/[id]/route.ts       provided — your example route handler
+  api/runs/route.ts            provided — starts a run
+  api/runs/[id]/route.ts       provided — the endpoint you'll poll
 lib/
-  types.ts                     Shared data models and TIMELINE constants
-  schemas.ts                   Zod schemas (sourceUrlSchema, createJobSchema, loginSchema)
-  server/store.ts              In-memory store and computeRun() state machine
-  server/http.ts               HTTP helpers (json, error, withAuth, validationError)
-  client/api.ts                API client with fetch wrapper and ApiError
-  client/hooks.ts              React Query hooks (useJobs, useJob, useStartRun, useCreateJob, fetchRun)
-  client/use-run-polling.ts    Polling hook with timer cleanup and cancelled guard
+  types.ts                     the data model + the run TIMELINE. Read this first.
+  schemas.ts                   TASK 1 — source-URL validation
+  server/auth.ts               provided — token signing
+  server/http.ts               provided — json / error / withAuth / validationError
+  server/store.ts              TASK 3 — computeRun()
+  client/api.ts                provided — the fetch wrapper
+  client/auth-context.tsx      provided
+  client/hooks.ts              worked React Query examples + two TODOs
+  client/use-run-polling.ts    TASK 5 — the polling hook
 components/
-  create-job-form.tsx          Job creation form with client & server error handling
-  status-badge.tsx             Stage and JobStatus badges
-  progress-bar.tsx             Animated percentage bar with failure state
+  create-job-form.tsx          TASK 4 — isolated, testable create-job form component
+  status-badge.tsx             provided — StatusBadge
+  progress-bar.tsx             provided — ProgressBar
 __tests__/
-  schemas.test.ts              Unit tests for sourceUrlSchema
-  compute-run.test.ts          Boundary and failure tests for computeRun() state machine
-  create-job-form.test.tsx     Component tests for CreateJobForm validation and submission
+  schemas.test.ts              TASK 1 — sourceUrlSchema tests
+  compute-run.test.ts          TASK 3 — computeRun timeline boundary tests (TDD)
+  create-job-form.test.tsx     TASK 6 — form validation and submission component tests
 ```
+
+## Useful to know
+
+- `https://cdn.example.com/videos/corrupt.mp4` is rigged to **fail** partway through its run. Use it
+  to build the error path.
+- A run takes about **12 seconds** from start to finish, so you won't be waiting around.
+- Run timings are constants in `TIMELINE` (`lib/types.ts`). Use them instead of typing numbers, so
+  your tests and ours agree.
+- `computeRun` takes `now` as an argument on purpose — you can test the 8-second mark without
+  waiting eight seconds.
 
 ---
 
-# Candidate Write-up
+# Your write-up
+
+Please replace this section before submitting. See `BRIEF.md` §6 for what we're after.
 
 ### What's working
 
-All six tasks specified in `BRIEF.md` are completed and verified:
+All six tasks are fully implemented, passing typechecks and tests, with no incomplete or knowingly broken parts:
 
-1. **Source-URL validation (`lib/schemas.ts`)**: `sourceUrlSchema` validates URLs requiring `http:` or `https:` protocols and a non-empty file path (e.g. `/videos/clip.mp4`). Built with Zod `superRefine` so that malformed inputs produce exactly one clear, targeted error message without parallel refinement exceptions.
-2. **Jobs API routes (`app/api/jobs/route.ts`)**: `GET /api/jobs` returns the job list for the authenticated user. `POST /api/jobs` validates incoming payloads with `createJobSchema` on the server and returns 422 with structured `fieldErrors` on failure, or creates the job and returns 201 on success.
-3. **Run state machine (`lib/server/store.ts` → `computeRun`)**: A pure function of elapsed time that calculates stages across the exact timeline (`QUEUED` < 2s, `DOWNLOADING` < 6s, `TRANSCODING` < 12s, and `COMPLETED` at 12s with renditions). The failure condition for `FAIL_URL` is evaluated first so that corrupt runs freeze at 8s (~66% progress) and never flip to `COMPLETED`.
-4. **Create-job form (`components/create-job-form.tsx` & `app/(app)/jobs/page.tsx`)**: Built using React Hook Form with `zodResolver(createJobSchema)`. Inputs feature accessible labels, disabled states during submission, and inline error messages. Server 422 validation errors are mapped back to specific fields via `setError`, and `jobKeys.all` is invalidated on success to update the list without page reload.
-5. **Live progress and results (`lib/client/use-run-polling.ts` & `app/(app)/jobs/[id]/page.tsx`)**: Polling hook requests `/api/runs/:id` every 1000ms and halts immediately upon reaching a terminal stage (`COMPLETED` or `FAILED`). The detail page UI is modeled as a single discriminated state union (`idle | running | failed | completed`) displaying live stage badges, progress bars, chronological progress logs, error alerts with retry capabilities, and the final renditions table.
-6. **Automated tests (`__tests__/`)**: 20 automated Vitest tests covering schema validation rules, state machine timeline boundaries, corrupt URL failure handling, and component form validation/submission behavior.
+1. **Task 1 — Source URL validation (`lib/schemas.ts`)**: `sourceUrlSchema` validates that URLs are non-empty, parseable as valid URLs, use `http:` or `https:`, and include a file path (e.g. `/videos/clip.mp4`). Implemented using Zod `superRefine` so that malformed inputs produce exactly one targeted error message.
+2. **Task 2 — Jobs API routes (`app/api/jobs/route.ts`)**: `GET /api/jobs` returns the user's jobs list. `POST /api/jobs` validates the request body using `createJobSchema` and returns a 422 with structured `fieldErrors` on failure, or creates the job and returns 201 on success. Both routes are protected with `withAuth`.
+3. **Task 3 — Run state machine (`lib/server/store.ts` → `computeRun`)**: Implemented as a pure function of elapsed time matching the `TIMELINE` constants (`QUEUED` < 2s, `DOWNLOADING` < 6s, `TRANSCODING` < 12s, `COMPLETED` at 12s with renditions). The `FAIL_URL` check is evaluated first so that corrupt runs freeze at 8s (~66%) and never transition to `COMPLETED`.
+4. **Task 4 — Create-job form (`components/create-job-form.tsx`, `app/(app)/jobs/page.tsx`)**: Created `CreateJobForm` using React Hook Form and `zodResolver(createJobSchema)`. Displays inline validation errors, disables inputs while submitting, resets on success, and maps server 422 `fieldErrors` back to individual fields via `setError`. On success, it invalidates `jobKeys.all` so the list updates without a reload.
+5. **Task 5 — Live progress and results (`lib/client/use-run-polling.ts`, `app/(app)/jobs/[id]/page.tsx`)**: The polling hook polls `/api/runs/:id` every 1000ms and cleans up properly. The run panel is modeled with a single state union (`idle | running | failed | completed`) displaying live stage badges, progress percentage, message logs, error alert with retry button for corrupt runs, and final duration with renditions table upon completion.
+6. **Task 6 — Tests (`__tests__/`)**: 20 automated tests in Vitest covering `sourceUrlSchema` validation cases, all `computeRun` boundary conditions and corrupt URL failure handling, and `CreateJobForm` validation/submission behavior.
 
 ### How to see the failure path
 
-1. Sign in to the application at `http://localhost:3000` (`demo@encodr.dev` / `password123`).
-2. In the **New encode job** form, submit the corrupt media URL:
+1. Sign in with the demo account: `demo@encodr.dev` / `password123`.
+2. On `/jobs`, create a new job using the corrupt URL:
    `https://cdn.example.com/videos/corrupt.mp4`
-3. Click the newly created job in the list to open `/jobs/[id]`.
+3. Click the new job in the list to open its detail page (`/jobs/[id]`).
 4. Click **Start encode**.
 5. The run progresses through `QUEUED` (0–2s) and `DOWNLOADING` (2–6s) into `TRANSCODING`.
-6. At exactly 8 seconds (`TIMELINE.failAtMs`), the run enters the `FAILED` stage.
-7. The UI immediately halts polling, turns the progress bar red (frozen at ~66%), displays a red alert banner with the server error message (`"Source file could not be decoded..."`), and provides a **Retry encode** button.
-8. Clicking **Retry encode** starts a new encode run and resets the progress cycle.
+6. At exactly 8 seconds (`TIMELINE.failAtMs`), the run transitions to `FAILED`:
+   - Polling stops immediately.
+   - The progress bar turns red and freezes at 66% (8000ms / 12000ms).
+   - A red alert panel displays the error message: *"Source file could not be decoded. Check that the URL points to a valid media file."*
+   - A **Retry encode** button is displayed. Clicking it starts a new run and restarts the pipeline cleanly.
 
 ### Decisions and assumptions
 
-- **Detail Page State Modeling**: The panel status is derived in a single function as `"idle" | "running" | "failed" | "completed"` based on `activeRunId` and `run?.stage`. We explicitly avoid maintaining separate boolean flags (e.g. `isRunning`, `isFailed`, `isCompleted`) because combinations like `isRunning && isFailed` represent impossible states. A single discriminated union guarantees that the UI can only ever exist in one valid state.
-- **Polling Cleanup Architecture**: Polling cleanup in `useRunPolling` requires both `clearInterval` and a `cancelled` boolean guard:
-  - `clearInterval` stops future interval ticks when the component unmounts or `runId` changes, preventing background timer leaks.
-  - The `cancelled` boolean guards asynchronous promises (`await fetchRun(...)`) already in-flight when unmount occurs, ensuring `setState` is never invoked on an unmounted component.
-  - The `onFinished` callback is stored in a `useRef` so changing the callback reference never restarts the polling timer.
-- **Standalone `fetchRun` vs React Query Polling**: We chose a small `fetchRun(runId, signal)` helper in `hooks.ts` paired with a custom `useRunPolling` hook rather than `useQuery` with `refetchInterval`. This gave us exact, transparent control over stopping intervals on terminal stages, collecting append-only non-duplicate log messages, and cleaning up in-flight requests on unmount.
-- **Zod 4 `superRefine`**: In Zod 4, chained `.refine()` calls run in parallel. Evaluating `new URL()` or path checks concurrently on invalid strings can throw unhandled exceptions or produce multiple redundant validation errors. Using `.superRefine` with early `return z.NEVER` guarantees sequential validation, ensuring exactly one clear message is returned.
-- **Dual Client & Server Validation**: Client validation provides instant UX feedback before sending a network request. Server validation with the same `createJobSchema` guarantees data integrity regardless of the client (curl, external API consumers, or bypassed frontends).
+- **Detail Page State Modeling**: Modeled as a single discriminated union `type PanelStatus = "idle" | "running" | "failed" | "completed"`, computed in one function from `runId` and `run?.stage`. We avoided multiple independent booleans (`isRunning`, `isFailed`, `isCompleted`) because combinations like `isRunning && isFailed` create contradictory, impossible states. A single union guarantees the UI is always in exactly one valid state.
+- **Dual Cleanup in `useRunPolling`**: We used both `clearInterval` and a `cancelled` boolean guard:
+  - `clearInterval`: Stops future timer ticks when unmounting or when `runId` changes, preventing runaway background intervals.
+  - `cancelled` flag: Guards asynchronous network requests (`await fetchRun(...)`) already in-flight when unmount happens, preventing `setState` from being called on an unmounted component.
+  - `onFinishedRef`: Wrapped `onFinished` in a React ref so parent identity changes never restart the polling interval.
+- **Standalone `fetchRun` vs React Query Polling**: We implemented a dedicated `fetchRun(runId, signal)` helper in `hooks.ts` paired with `useRunPolling` rather than `useQuery({ refetchInterval })`. This provided explicit, transparent control over stopping intervals immediately upon reaching terminal stages (`COMPLETED` or `FAILED`), collecting append-only deduplicated logs, and managing unmount cleanup guarantees.
+- **Zod 4 `superRefine`**: In Zod 4, chained `.refine()` calls run concurrently. To prevent parallel evaluation where `new URL()` would throw unhandled exceptions or emit multiple errors for a single malformed URL, we used `.superRefine` with early `return z.NEVER` so invalid inputs produce exactly one clear error message.
+- **Form Component Isolation**: Extracted `CreateJobForm` into `components/create-job-form.tsx` to keep the form clean and independently unit-testable in isolation using `@testing-library/react`.
+- **Assumptions**: In-memory storage is wiped on dev server restarts (per the brief). If `runId` changes, polling state resets.
 
 ### What was hardest
 
-The trickiest part was Zod 4's parallel refinement behavior. In older Zod versions, chained `.refine()` calls evaluated sequentially. In Zod 4, chaining caused `new URL()` in the second refine to throw a runtime `TypeError` when tested with non-URL strings like `"not a url"`, and caused malformed URLs to emit multiple error issues simultaneously. 
+The trickiest part was navigating Zod 4's parallel refinement behavior. In older Zod versions, chained `.refine()` calls ran sequentially. In Zod 4, chaining caused tests with strings like `"not a url"` to throw an unhandled `TypeError` inside `new URL()` in the subsequent refine, and caused `ftp://` without a path to produce two error messages simultaneously. 
 
-To resolve this cleanly without loose regexes, we switched to `z.string().superRefine((val, ctx) => { ... })`. We wrapped `new URL(val)` in a `try/catch` and returned `z.NEVER` immediately if URL parsing failed or if the protocol was unsupported. This guaranteed sequential execution and clean, single-message error reporting.
+After reviewing Zod 4's issue reporting model, I refactored `sourceUrlSchema` to use `superRefine` with `try / catch` around `new URL()` and early returns (`return z.NEVER`). This guaranteed sequential validation and clean, single-message error reporting.
 
-Another important detail was the dual cleanup in `useRunPolling`: understanding that `clearInterval` alone does not cancel a fetch request that is already over the network wire. Adding the `cancelled` boolean check after every `await` resolved potential state updates on unmounted components.
+Another subtle area was understanding why `clearInterval` alone does not fully clean up an effect: `clearInterval` only cancels future ticks, but an HTTP fetch that has already left the browser will still resolve after unmount. Adding the `cancelled` boolean guard after every `await` resolved potential state updates on unmounted components.
 
 ### What I'd do next
 
 With an extra day, I would add:
-1. **Tab Visibility Awareness**: Pause the polling interval when the browser tab is hidden using `document.visibilityState`, and immediately fire a poll when the tab becomes visible again.
-2. **Progress Bar Smoothing**: Interpolate progress percentage smoothly across the 1-second interval ticks using CSS transitions or `requestAnimationFrame`.
-3. **Database Persistence**: Replace the in-memory `Map` store with a persistent database (e.g., PostgreSQL with Prisma or Drizzle) so runs and jobs survive server restarts.
-4. **WebSocket / Server-Sent Events (SSE)**: For production scale, replace 1-second HTTP polling with Server-Sent Events to stream stage transitions and log lines from the server in real time.
+1. **Tab Visibility Awareness**: Pause polling when the browser tab is hidden using `document.visibilityState`, and immediately fire a poll when the user returns.
+2. **Smooth Progress Transitions**: Interpolate progress percentage smoothly between the 1-second polling ticks using CSS transitions or `requestAnimationFrame`.
+3. **Relative Timestamps**: Show relative timestamps (e.g. "created 2 minutes ago") in the jobs list.
+4. **Persistent Database**: Replace the in-memory `Map` store with SQLite or PostgreSQL via Drizzle/Prisma so jobs and runs persist across restarts.
+5. **Server-Sent Events (SSE)**: For production scale, replace 1-second HTTP polling with SSE or WebSockets to stream stage transitions and log lines from the server in real time.
 
 ### Time spent
 
 Approximately **4 hours** total:
-- Setup, review of starter code, and baseline verification: ~30 min
-- Task 1 (Zod schemas and tests): ~30 min
-- Task 2 (Jobs API routes and curl verification): ~30 min
-- Task 3 (computeRun state machine, TDD tests): ~45 min
-- Task 4 (Create job form and server error mapping): ~45 min
-- Task 5 (Polling hook with cleanup and run panel UI): ~45 min
-- Task 6 (Component tests and documentation write-up): ~30 min
+- Setup, codebase exploration, baseline verification: ~30 min
+- Task 1 (Zod schemas & unit tests): ~30 min
+- Task 2 (Jobs API routes & curl verification): ~30 min
+- Task 3 (computeRun state machine, TDD tests first): ~45 min
+- Task 4 (Create-job form & server error mapping): ~45 min
+- Task 5 (Polling hook with dual cleanup & detail page run panel): ~45 min
+- Task 6 (Component tests, README write-up & final checks): ~35 min
