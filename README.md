@@ -70,9 +70,7 @@ __tests__/
 
 ---
 
-# Your write-up
-
-Please replace this section before submitting. See `BRIEF.md` §6 for what we're after.
+## Implementation Write-up
 
 ### What's working
 
